@@ -140,15 +140,18 @@ class ChatProcessor:
             days_old = max((now - ts) / 86400, 0)
             recency = 1.0 / (1.0 + days_old * 0.05)
 
+            # Importance — boosts high-value memories in retrieval ranking
+            importance = max(0.0, min(1.0, float(mem.get("importance", 0.5))))
+
             # Gate: need real relevance, not just recency
             if has_vector:
                 if vs < 0.20 and kw_norm < 0.08:
                     continue
-                final = (0.55 * vs) + (0.40 * kw_norm) + (0.05 * recency)
+                final = (0.50 * vs) + (0.35 * kw_norm) + (0.05 * recency) + (0.10 * importance)
             else:
                 if kw_norm < 0.08:
                     continue
-                final = (0.95 * kw_norm) + (0.05 * recency)
+                final = (0.85 * kw_norm) + (0.05 * recency) + (0.10 * importance)
 
             if final > 0.12:
                 scored.append((final, mem))
@@ -209,7 +212,19 @@ class ChatProcessor:
             mem_entries = self.memory_manager.load(owner=owner)
 
             pinned = [m for m in mem_entries if m.get("pinned")]
-            extended = [m for m in mem_entries if not m.get("pinned")]
+            non_pinned = [m for m in mem_entries if not m.get("pinned")]
+
+            # Hot tier: high-importance memories always injected, protected from trimming.
+            # Capped at 5 entries to prevent context lockup when many are marked important.
+            _HOT_THRESHOLD = 0.8
+            _HOT_CAP = 5
+            hot = sorted(
+                [m for m in non_pinned if float(m.get("importance", 0.5)) >= _HOT_THRESHOLD],
+                key=lambda m: float(m.get("importance", 0.5)),
+                reverse=True,
+            )[:_HOT_CAP]
+            hot_ids = {m["id"] for m in hot if m.get("id")}
+            warm = [m for m in non_pinned if m.get("id") not in hot_ids]
 
             _used_ids: list = []
             if pinned:
@@ -223,8 +238,21 @@ class ChatProcessor:
                     if m.get("id"):
                         _used_ids.append(m["id"])
 
-            if extended:
-                relevant = self._hybrid_retrieve(message, extended, k=3)
+            if hot:
+                hot_text = "\n".join([f"- {m['text']}" for m in hot])
+                hot_msg = untrusted_context_message(
+                    "saved memory: high-importance facts",
+                    f"High-importance facts — always keep in mind:\n{hot_text}",
+                )
+                hot_msg["_protected"] = True
+                preface.append(hot_msg)
+                for m in hot:
+                    self._last_used_memories.append({"text": m["text"], "category": m.get("category", "fact"), "type": "hot"})
+                    if m.get("id"):
+                        _used_ids.append(m["id"])
+
+            if warm:
+                relevant = self._hybrid_retrieve(message, warm, k=3)
                 if relevant:
                     ext_text = "\n".join([f"- {m['text']}" for m in relevant])
                     preface.append(untrusted_context_message(

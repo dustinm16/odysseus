@@ -163,6 +163,8 @@ class MemoryManager:
                 entry["category"] = "fact"
             if "uses" not in entry:
                 entry["uses"] = 0
+            if "importance" not in entry:
+                entry["importance"] = 0.5
             validated.append(entry)
         return validated
     
@@ -212,7 +214,7 @@ class MemoryManager:
             json.dump(entries, f, ensure_ascii=False, indent=2)
         os.replace(tmp_file, self.memory_file)
     
-    def add_entry(self, text: str, source: str = "user", category: str = "fact", owner: str = None) -> Dict:
+    def add_entry(self, text: str, source: str = "user", category: str = "fact", owner: str = None, importance: float = 0.5) -> Dict:
         """Add a new memory entry."""
         if not text.strip():
             raise ValueError("Memory text cannot be empty")
@@ -224,6 +226,7 @@ class MemoryManager:
             "source": source,
             "category": category,
             "uses": 0,
+            "importance": max(0.0, min(1.0, float(importance))),
         }
         if owner:
             entry["owner"] = owner
