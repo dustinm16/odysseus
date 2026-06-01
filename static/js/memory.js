@@ -655,6 +655,19 @@ export function renderMemoryList() {
     catBadge.textContent = cat;
     meta.appendChild(catBadge);
 
+    const imp = parseFloat(memory.importance ?? 0.5);
+    if (imp >= 0.8 || imp < 0.4 || (imp >= 0.6 && imp < 0.8)) {
+      const impBadge = document.createElement('span');
+      let impLabel, impClass;
+      if      (imp >= 0.8) { impLabel = 'hot';  impClass = 'memory-imp-hot'; }
+      else if (imp >= 0.6) { impLabel = 'high'; impClass = 'memory-imp-high'; }
+      else                 { impLabel = 'low';  impClass = 'memory-imp-low'; }
+      impBadge.className = `memory-cat-badge ${impClass}`;
+      impBadge.textContent = impLabel;
+      impBadge.title = `Importance ${imp} — ${imp >= 0.8 ? 'always in context' : imp >= 0.6 ? 'retrieval boosted' : 'retrieval suppressed'}`;
+      meta.appendChild(impBadge);
+    }
+
     const srcSpan = document.createElement('span');
     srcSpan.className = 'memory-item-source';
     srcSpan.textContent = memory.source === 'auto' ? 'auto' : 'manual';
@@ -881,8 +894,27 @@ function startInlineEdit(item, memory) {
     catSelect.appendChild(opt);
   });
 
+  const impSelect = document.createElement('select');
+  impSelect.className = 'memory-edit-cat-select memory-edit-imp-select';
+  impSelect.title = 'Importance';
+  const _impLevels = [
+    { value: 0.2, label: '▽ low' },
+    { value: 0.5, label: '○ normal' },
+    { value: 0.7, label: '▲ high' },
+    { value: 0.9, label: '★ hot' },
+  ];
+  const _currentImp = parseFloat(memory.importance ?? 0.5);
+  _impLevels.forEach(({ value, label }) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    opt.selected = Math.abs(value - _currentImp) < 0.16;
+    impSelect.appendChild(opt);
+  });
+
   editRow.appendChild(input);
   editRow.appendChild(catSelect);
+  editRow.appendChild(impSelect);
 
   const actions = document.createElement('div');
   actions.className = 'memory-item-actions';
@@ -891,7 +923,7 @@ function startInlineEdit(item, memory) {
   const saveBtn = document.createElement('button');
   saveBtn.className = 'memory-item-btn save';
   saveBtn.textContent = 'save';
-  saveBtn.addEventListener('click', () => saveInlineEdit(memory.id, input.value, catSelect.value));
+  saveBtn.addEventListener('click', () => saveInlineEdit(memory.id, input.value, catSelect.value, parseFloat(impSelect.value)));
 
   const cancelBtn = document.createElement('button');
   cancelBtn.className = 'memory-item-btn';
@@ -908,7 +940,7 @@ function startInlineEdit(item, memory) {
   input.select();
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') saveInlineEdit(memory.id, input.value, catSelect.value);
+    if (e.key === 'Enter') saveInlineEdit(memory.id, input.value, catSelect.value, parseFloat(impSelect.value));
     if (e.key === 'Escape') {
       e.stopPropagation();
       e.stopImmediatePropagation();
@@ -917,13 +949,14 @@ function startInlineEdit(item, memory) {
   });
 }
 
-async function saveInlineEdit(id, newText, newCategory) {
+async function saveInlineEdit(id, newText, newCategory, newImportance) {
   newText = newText.trim();
   if (!newText) return;
 
   const memory = memories.find(m => m.id === id);
   const catChanged = newCategory && newCategory !== (memory?.category || 'fact');
-  if (!memory || (newText === memory.text && !catChanged)) {
+  const impChanged = newImportance !== undefined && Math.abs(newImportance - parseFloat(memory?.importance ?? 0.5)) > 0.01;
+  if (!memory || (newText === memory.text && !catChanged && !impChanged)) {
     renderMemoryList();
     return;
   }
@@ -931,6 +964,7 @@ async function saveInlineEdit(id, newText, newCategory) {
   try {
     const params = new URLSearchParams({ text: newText });
     if (newCategory) params.append('category', newCategory);
+    if (newImportance !== undefined) params.append('importance', newImportance);
 
     const response = await fetch(`${window.location.origin}/api/memory/${id}`, {
       method: 'PUT',
