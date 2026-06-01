@@ -91,7 +91,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         if memory_manager.find_duplicates(text, user_mem):
             return {"ok": True, "count": len(user_mem), "message": "Memory already exists"}
 
-        new_entry = memory_manager.add_entry(text, memory_data.source, memory_data.category, owner=user)
+        new_entry = memory_manager.add_entry(text, memory_data.source, memory_data.category, owner=user, importance=memory_data.importance)
         if memory_data.session_id:
             new_entry["session_id"] = memory_data.session_id
         all_mem = memory_manager.load_all()
@@ -489,8 +489,8 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         raise HTTPException(404, "Memory not found")
 
     @router.put("/{memory_id}")
-    def update_memory(request: Request, memory_id: str, text: str = Form(...), category: str = Form(None)):
-        """Update an existing memory item with new text and optional category."""
+    def update_memory(request: Request, memory_id: str, text: str = Form(...), category: str = Form(None), importance: Optional[float] = Form(None)):
+        """Update an existing memory item with new text, optional category, and optional importance."""
         user = _owner(request)
         all_mem = memory_manager.load_all()
         for i, memory in enumerate(all_mem):
@@ -499,6 +499,8 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 all_mem[i]["text"] = text.strip()
                 if category:
                     all_mem[i]["category"] = category
+                if importance is not None:
+                    all_mem[i]["importance"] = max(0.0, min(1.0, float(importance)))
                 all_mem[i]["timestamp"] = int(time.time())
 
                 memory_manager.save(all_mem)

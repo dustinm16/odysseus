@@ -151,6 +151,8 @@ class MemoryManager:
                 entry["source"] = "unknown"
             if "category" not in entry:
                 entry["category"] = "fact"
+            if "importance" not in entry:
+                entry["importance"] = 0.5
             validated.append(entry)
         return validated
     
@@ -200,7 +202,7 @@ class MemoryManager:
             json.dump(entries, f, ensure_ascii=False, indent=2)
         os.replace(tmp_file, self.memory_file)
     
-    def add_entry(self, text: str, source: str = "user", category: str = "fact", owner: str = None) -> Dict:
+    def add_entry(self, text: str, source: str = "user", category: str = "fact", owner: str = None, importance: float = 0.5) -> Dict:
         """Add a new memory entry."""
         if not text.strip():
             raise ValueError("Memory text cannot be empty")
@@ -210,11 +212,26 @@ class MemoryManager:
             "text": text.strip(),
             "timestamp": int(time.time()),
             "source": source,
-            "category": category
+            "category": category,
+            "importance": max(0.0, min(1.0, float(importance))),
         }
         if owner:
             entry["owner"] = owner
         return entry
+
+    def increment_uses(self, ids: list) -> None:
+        """Bump the use counter on the given memory IDs and persist."""
+        if not ids:
+            return
+        entries = self.load_all()
+        id_set = set(ids)
+        changed = False
+        for e in entries:
+            if e.get("id") in id_set:
+                e["uses"] = e.get("uses", 0) + 1
+                changed = True
+        if changed:
+            self.save(entries)
     
     def find_duplicates(self, text: str, entries: List[Dict] = None) -> List[Dict]:
         """Find duplicate memory entries based on text content."""
