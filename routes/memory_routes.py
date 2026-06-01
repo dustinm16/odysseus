@@ -112,7 +112,12 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 raise HTTPException(404, "Session not found")
             _assert_session_owner(session_obj, user)
 
-        new_entry = memory_manager.add_entry(text, memory_data.source, memory_data.category, owner=user, importance=memory_data.importance)
+        if memory_data.importance is None:
+            from services.memory.importance_scorer import score_importance
+            eff_importance = score_importance(text, memory_data.category, memory_data.source)
+        else:
+            eff_importance = memory_data.importance
+        new_entry = memory_manager.add_entry(text, memory_data.source, memory_data.category, owner=user, importance=eff_importance)
         if memory_data.session_id:
             new_entry["session_id"] = memory_data.session_id
         all_mem = memory_manager.load_all()

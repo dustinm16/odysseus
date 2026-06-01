@@ -992,7 +992,9 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         if not text:
             return {"error": "Memory text cannot be empty"}
 
-        entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
+        from services.memory.importance_scorer import score_importance
+        entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner,
+                                          importance=score_importance(text, category, "ai_agent"))
         memories = _memory_manager.load_all()
         memories.append(entry)
         _memory_manager.save(memories)
