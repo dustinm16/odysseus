@@ -328,7 +328,9 @@ async def extract_and_store(
                 logger.debug(f"Memory dedup (fuzzy): '{fact_text[:50]}' too similar to existing")
                 continue
 
-            entry = memory_manager.add_entry(fact_text, source="auto", category=category, owner=_owner)
+            from services.memory.importance_scorer import score_importance
+            entry = memory_manager.add_entry(fact_text, source="auto", category=category, owner=_owner,
+                                             importance=score_importance(fact_text, category, "auto"))
             # Auto-pin identity facts (name, job, location) — core context
             if category == "identity":
                 entry["pinned"] = True

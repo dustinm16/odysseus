@@ -231,3 +231,99 @@ def test_hot_tier_capped_at_five():
     assert hot_block is not None, "Protected hot block should be present"
     injected_facts = [l for l in hot_block["content"].splitlines() if l.strip().startswith("- ")]
     assert len(injected_facts) <= 5, f"Hot tier must be capped at 5, got {len(injected_facts)}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Auto-importance scorer tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from services.memory.importance_scorer import score_importance
+
+
+# ── 7. Pattern scoring ────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("text,category,source,min_score,max_score", [
+    # Critical identity — user source, no cap
+    ("My name is Alex.",                    "identity",   "user",     1.0,  1.0),
+    ("Call me Alex.",                       "identity",   "user",     1.0,  1.0),
+    # Strong identity
+    ("I work at Acme Corp.",                "identity",   "user",     0.9,  1.0),
+    ("I live in Seattle.",                  "identity",   "user",     0.9,  1.0),
+    ("My wife is Jane.",                    "identity",   "user",     0.9,  1.0),
+    ("Please remember that I use vim.",     "fact",       "user",     0.9,  1.0),
+    ("Remember this: dark mode only.",      "preference", "user",     0.9,  1.0),
+    # Role identity / preference
+    ("I am a software engineer.",           "identity",   "user",     0.85, 1.0),
+    ("I prefer Python over Java.",          "preference", "user",     0.85, 1.0),
+    ("I'm allergic to peanuts.",            "preference", "user",     0.85, 1.0),
+    ("I hate early meetings.",              "preference", "user",     0.85, 1.0),
+    # Goals
+    ("I want to learn Rust.",               "goal",       "user",     0.75, 1.0),
+    # Category floor — no pattern match
+    ("User uses neovim.",                   "preference", "user",     0.70, 0.85),
+    ("Random note about the meeting.",      "fact",       "user",     0.50, 0.65),
+    # Source cap — auto capped at 0.85
+    ("My name is Alex.",                    "identity",   "auto",     0.85, 0.85),
+    ("My name is Alex.",                    "identity",   "ai_agent", 0.85, 0.85),
+    # Source cap — category floor still applies for auto
+    ("Random note.",                        "fact",       "auto",     0.50, 0.85),
+    # Negation guard — should NOT hit full pattern score
+    ("I do not live in Paris.",             "identity",   "user",     0.0,  0.85),
+    ("I don't like coffee.",                "preference", "user",     0.0,  0.75),
+    # Weak noun guard — "I am a bit tired" should not score as role-identity
+    ("I am a bit tired today.",             "fact",       "user",     0.0,  0.65),
+    ("I'm a little confused.",              "fact",       "user",     0.0,  0.65),
+])
+def test_score_importance_patterns(text, category, source, min_score, max_score):
+    score = score_importance(text, category, source)
+    assert min_score <= score <= max_score, (
+        f"score_importance({text!r}, {category!r}, {source!r}) = {score}, "
+        f"expected [{min_score}, {max_score}]"
+    )
+
+
+# ── 8. Explicit importance preserved; None triggers auto-score ────────────────
+
+def test_api_explicit_importance_preserved(tmp_path):
+    """When importance is passed explicitly it must not be overwritten by scorer."""
+    import json
+    (tmp_path / "memory.json").write_text("[]")
+    mgr = MemoryManager(str(tmp_path))
+
+    # Explicit 0.2 on a "my name is" text — scorer would give 1.0, but explicit wins
+    entry = mgr.add_entry("My name is Alex.", source="user", importance=0.2)
+    assert entry["importance"] == 0.2, "Explicit importance must not be overridden by scorer"
+
+
+def test_auto_score_fires_when_importance_none(tmp_path):
+    """add_entry with default importance=0.5 does NOT auto-score — scorer is applied at call sites."""
+    import json
+    (tmp_path / "memory.json").write_text("[]")
+    mgr = MemoryManager(str(tmp_path))
+
+    # Simulating the call-site pattern: score first, pass result in
+    imp = score_importance("My name is Alex.", "identity", "user")
+    entry = mgr.add_entry("My name is Alex.", source="user", importance=imp)
+    assert entry["importance"] == 1.0
+
+
+# ── 9. Auto-extracted identity lands in hot tier ─────────────────────────────
+
+def test_auto_extracted_identity_reaches_hot_tier():
+    """Auto-extracted 'my name is' hits 0.85 (just at hot threshold) due to source cap."""
+    score = score_importance("My name is Sam.", "identity", "auto")
+    assert score >= 0.8, "Auto-extracted identity must reach the hot tier threshold"
+    assert score <= 0.85, "Auto-extracted identity must not exceed the source cap"
+
+
+def test_user_identity_reaches_critical():
+    """User-entered 'my name is' should reach 1.0 with no source cap."""
+    assert score_importance("My name is Sam.", "identity", "user") == 1.0
+
+
+# ── 10. Identity category floor ──────────────────────────────────────────────
+
+def test_identity_category_floor_without_pattern():
+    """An identity-category entry with no pattern match still floors at 0.8."""
+    score = score_importance("Some obscure identity note.", "identity", "user")
+    assert score >= 0.8, "Identity category floor must be 0.8"

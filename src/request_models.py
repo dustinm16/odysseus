@@ -38,7 +38,7 @@ class MemoryAddRequest(BaseModel):
     category: str = Field(default="fact", description="Memory category")
     source: str = Field(default="user", description="Memory source")
     session_id: Optional[str] = Field(default=None, description="Associated session ID")
-    importance: float = Field(default=0.5, ge=0.0, le=1.0, description="Importance score (0.0–1.0)")
+    importance: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Importance score (0.0–1.0); omit to auto-score from content")
 
     @field_validator('category')
     @classmethod

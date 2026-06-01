@@ -110,7 +110,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         category = arguments.get("category", "fact")
         if not text:
             return [TextContent(type="text", text="Error: Memory text cannot be empty")]
-        entry = _memory_manager.add_entry(text, source="ai_agent", category=category)
+        from services.memory.importance_scorer import score_importance
+        entry = _memory_manager.add_entry(text, source="ai_agent", category=category,
+                                          importance=score_importance(text, category, "ai_agent"))
         memories = _memory_manager.load_all()
         memories.append(entry)
         _memory_manager.save(memories)

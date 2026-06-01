@@ -290,7 +290,10 @@ class ChatHandler:
         if is_memory_cmd and memory_text:
             mem = self.memory_manager.load()
             if not self.memory_manager.find_duplicates(memory_text, mem):
-                new_entry = self.memory_manager.add_entry(memory_text)
+                from services.memory.importance_scorer import score_importance
+                new_entry = self.memory_manager.add_entry(
+                    memory_text, source="user", importance=score_importance(memory_text, "fact", "user")
+                )
                 mem.append(new_entry)
                 self.memory_manager.save(mem)
 
