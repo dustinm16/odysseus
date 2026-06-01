@@ -11059,6 +11059,18 @@ textarea.memory-add-input {
   background: color-mix(in srgb, var(--red) 15%, transparent);
   color: var(--red);
 }
+.memory-imp-hot {
+  background: color-mix(in srgb, var(--red) 18%, transparent);
+  color: var(--red);
+}
+.memory-imp-high {
+  background: color-mix(in srgb, var(--orange, #ffb86c) 15%, transparent);
+  color: var(--orange, #ffb86c);
+}
+.memory-imp-low {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: color-mix(in srgb, var(--fg) 35%, transparent);
+}
 
 /* Source and time metadata */
 .memory-item-source,
