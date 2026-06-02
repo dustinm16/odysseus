@@ -501,11 +501,19 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         for i, memory in enumerate(all_mem):
             if memory["id"] == memory_id:
                 _verify_memory_owner(memory, user)
-                all_mem[i]["text"] = text.strip()
+                new_text = text.strip()
+                new_cat = category or memory.get("category", "fact")
+                all_mem[i]["text"] = new_text
                 if category:
-                    all_mem[i]["category"] = category
+                    all_mem[i]["category"] = new_cat
                 if importance is not None:
                     all_mem[i]["importance"] = max(0.0, min(1.0, float(importance)))
+                elif new_text != memory.get("text", ""):
+                    # Text changed with no explicit importance — re-score from new content
+                    from services.memory.importance_scorer import score_importance
+                    all_mem[i]["importance"] = score_importance(
+                        new_text, new_cat, memory.get("source", "user")
+                    )
                 all_mem[i]["timestamp"] = int(time.time())
 
                 memory_manager.save(all_mem)

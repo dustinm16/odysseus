@@ -122,8 +122,8 @@ def score_importance(
             if noun in _WEAK_NOUNS:
                 continue
 
-        # Negation window: look at the 40 chars before the match start
-        window = text[max(0, m.start() - 40) : m.start()]
+        # Negation window: look at the 80 chars before the match start
+        window = text[max(0, m.start() - 80) : m.start()]
         if _NEGATION_RE.search(window):
             continue
 

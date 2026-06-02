@@ -213,6 +213,7 @@ class MemoryManager:
             "timestamp": int(time.time()),
             "source": source,
             "category": category,
+            "uses": 0,
             "importance": max(0.0, min(1.0, float(importance))),
         }
         if owner:
