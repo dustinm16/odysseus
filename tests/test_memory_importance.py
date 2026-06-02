@@ -398,3 +398,168 @@ def test_importance_preserved_when_only_category_changes(tmp_path):
 
     reloaded = mgr.load_all()
     assert reloaded[0]["importance"] == 0.9, "Category change must not reset importance"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Entity features: usage nudge, decay, observation endpoint
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── 14. Usage nudge ───────────────────────────────────────────────────────────
+
+def test_increment_uses_nudges_importance(tmp_path):
+    """Each use bumps importance by _NUDGE_STEP."""
+    import json
+    (tmp_path / "memory.json").write_text("[]")
+    mgr = MemoryManager(str(tmp_path))
+    entry = mgr.add_entry("Admin likes coffee", source="user", importance=0.5)
+    all_mem = [entry]; mgr.save(all_mem)
+
+    mgr.increment_uses([entry["id"]])
+    reloaded = mgr.load_all()
+    assert reloaded[0]["importance"] == pytest.approx(0.52, abs=0.001)
+
+
+def test_nudge_respects_source_cap_auto(tmp_path):
+    """Auto-source entries must never exceed 0.85 no matter how many uses."""
+    import json
+    (tmp_path / "memory.json").write_text("[]")
+    mgr = MemoryManager(str(tmp_path))
+    entry = mgr.add_entry("My name is Alex", source="auto", importance=0.85)
+    all_mem = [entry]; mgr.save(all_mem)
+
+    for _ in range(30):
+        mgr.increment_uses([entry["id"]])
+
+    reloaded = mgr.load_all()
+    assert reloaded[0]["importance"] <= 0.85, "Auto source must be capped at 0.85"
+
+
+def test_nudge_respects_source_cap_observation(tmp_path):
+    """Observation-source entries must never exceed 0.50."""
+    import json
+    (tmp_path / "memory.json").write_text("[]")
+    mgr = MemoryManager(str(tmp_path))
+    entry = mgr.add_entry("User opened VS Code", source="observation", importance=0.2)
+    all_mem = [entry]; mgr.save(all_mem)
+
+    for _ in range(30):
+        mgr.increment_uses([entry["id"]])
+
+    reloaded = mgr.load_all()
+    assert reloaded[0]["importance"] <= 0.50, "Observation source must be capped at 0.50"
+
+
+def test_nudge_updates_last_used_at(tmp_path):
+    """increment_uses must update last_used_at timestamp."""
+    import json, time
+    (tmp_path / "memory.json").write_text("[]")
+    mgr = MemoryManager(str(tmp_path))
+    entry = mgr.add_entry("test", source="user", importance=0.5)
+    original_ts = entry["last_used_at"]
+    all_mem = [entry]; mgr.save(all_mem)
+
+    time.sleep(0.01)
+    mgr.increment_uses([entry["id"]])
+    reloaded = mgr.load_all()
+    assert reloaded[0]["last_used_at"] >= original_ts
+
+
+# ── 15. Importance decay ──────────────────────────────────────────────────────
+
+def test_decay_reduces_importance_on_idle_entry(tmp_path):
+    """Entry idle for 48h should have decayed importance."""
+    import json, time
+    (tmp_path / "memory.json").write_text("[]")
+    mgr = MemoryManager(str(tmp_path))
+    now = int(time.time())
+    two_days_ago = now - (48 * 3600)
+
+    entry = mgr.add_entry("User mentioned coffee", source="user", importance=0.75)
+    all_mem = [entry]
+    all_mem[0]["last_used_at"] = two_days_ago
+    mgr.save(all_mem)
+
+    n = mgr.decay_unused()
+    assert n == 1
+    reloaded = mgr.load_all()
+    assert reloaded[0]["importance"] < 0.75, "Idle entry importance should have decayed"
+
+
+def test_decay_respects_category_floor(tmp_path):
+    """Decay must not drop importance below category floor."""
+    import json, time
+    (tmp_path / "memory.json").write_text("[]")
+    mgr = MemoryManager(str(tmp_path))
+    now = int(time.time())
+    old_ts = now - (365 * 24 * 3600)  # 1 year ago
+
+    entry = mgr.add_entry("Some identity note", source="auto", importance=0.85, category="identity")
+    all_mem = [entry]
+    all_mem[0]["last_used_at"] = old_ts
+    all_mem[0]["timestamp"] = old_ts
+    mgr.save(all_mem)
+
+    # Run many decay cycles
+    for _ in range(50):
+        mgr.decay_unused()
+
+    reloaded = mgr.load_all()
+    assert reloaded[0]["importance"] >= 0.80, "Identity floor is 0.80 — decay must not go below"
+
+
+def test_decay_skips_pinned_entries(tmp_path):
+    """Pinned entries must not be decayed."""
+    import json, time
+    (tmp_path / "memory.json").write_text("[]")
+    mgr = MemoryManager(str(tmp_path))
+    old_ts = int(time.time()) - (48 * 3600)
+
+    entry = mgr.add_entry("Core fact", source="user", importance=0.9)
+    all_mem = [entry]
+    all_mem[0]["pinned"] = True
+    all_mem[0]["last_used_at"] = old_ts
+    mgr.save(all_mem)
+
+    mgr.decay_unused()
+    reloaded = mgr.load_all()
+    assert reloaded[0]["importance"] == 0.9, "Pinned entry must not be decayed"
+
+
+def test_decay_skips_recently_used(tmp_path):
+    """Entry used within 24h must not be decayed."""
+    import json, time
+    (tmp_path / "memory.json").write_text("[]")
+    mgr = MemoryManager(str(tmp_path))
+
+    entry = mgr.add_entry("Recent fact", source="user", importance=0.75)
+    all_mem = [entry]
+    all_mem[0]["last_used_at"] = int(time.time()) - 3600  # 1 hour ago
+    mgr.save(all_mem)
+
+    n = mgr.decay_unused()
+    assert n == 0, "Recently used entry must not be decayed"
+
+
+# ── 16. Observation scorer cap ────────────────────────────────────────────────
+
+def test_observation_source_capped_at_half(tmp_path):
+    """score_importance with source='observation' must not exceed 0.50."""
+    # Even a critical-identity pattern should be capped
+    score = score_importance("My name is Alex.", "identity", "observation")
+    assert score <= 0.50, "Observation source must be capped at 0.50"
+
+
+def test_last_used_at_backfilled_from_timestamp(tmp_path):
+    """Legacy entries without last_used_at get it backfilled from timestamp."""
+    import json
+    legacy_ts = 1700000000
+    mem_file = tmp_path / "memory.json"
+    mem_file.write_text(json.dumps([{
+        "id": "abc", "text": "old entry", "timestamp": legacy_ts,
+        "source": "user", "category": "fact", "importance": 0.5
+    }]))
+    mgr = MemoryManager(str(tmp_path))
+    entries = mgr.load_all()
+    assert entries[0]["last_used_at"] == legacy_ts, (
+        "last_used_at must be backfilled from timestamp for legacy entries"
+    )

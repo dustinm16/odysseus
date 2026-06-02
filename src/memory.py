@@ -147,6 +147,10 @@ class MemoryManager:
                 entry["uses"] = 0
             if "importance" not in entry:
                 entry["importance"] = 0.5
+            # Backfill last_used_at from creation timestamp so old entries
+            # don't decay immediately on first sweep.
+            if "last_used_at" not in entry:
+                entry["last_used_at"] = entry["timestamp"]
             validated.append(entry)
         return validated
     
@@ -201,10 +205,12 @@ class MemoryManager:
         if not text.strip():
             raise ValueError("Memory text cannot be empty")
 
+        now = int(time.time())
         entry = {
             "id": str(uuid.uuid4()),
             "text": text.strip(),
-            "timestamp": int(time.time()),
+            "timestamp": now,
+            "last_used_at": now,
             "source": source,
             "category": category,
             "uses": 0,
@@ -214,21 +220,92 @@ class MemoryManager:
             entry["owner"] = owner
         return entry
 
+    # Per-source importance nudge cap: auto/agent/observation sources can be
+    # promoted by repeated use but never past their original source ceiling.
+    _NUDGE_CAP: dict = {
+        "user":        0.95,
+        "auto":        0.85,
+        "ai_agent":    0.85,
+        "observation": 0.50,
+    }
+    _NUDGE_STEP = 0.02  # importance gained per use
+
     def increment_uses(self, ids: List[str]) -> None:
-        """Bump the uses counter for each memory id. Called after a memory has
-        actually been injected into a chat's context (not just retrieved)."""
+        """Bump the uses counter and nudge importance for injected memories.
+
+        Each use bumps importance by _NUDGE_STEP, capped per source so
+        auto-extracted entries can't exceed the original source ceiling.
+        Also updates last_used_at for decay tracking.
+        """
         if not ids:
             return
         id_set = set(ids)
         entries = self.load_all()
         changed = False
+        now = int(time.time())
         for e in entries:
             if e.get("id") in id_set:
                 e["uses"] = int(e.get("uses", 0) or 0) + 1
+                e["last_used_at"] = now
+                # Nudge importance toward hot tier — respect source cap
+                source = e.get("source", "user")
+                cap = self._NUDGE_CAP.get(source, 0.95)
+                current = float(e.get("importance", 0.5))
+                if current < cap:
+                    e["importance"] = round(min(current + self._NUDGE_STEP, cap), 4)
                 changed = True
         if changed:
             self.save(entries)
     
+    # Category floors for decay — importance never drops below these values.
+    _DECAY_FLOOR: dict = {
+        "identity":   0.80,
+        "preference": 0.70,
+        "goal":       0.70,
+        "project":    0.60,
+        "contact":    0.60,
+        "task":       0.55,
+        "fact":       0.50,
+    }
+    _DECAY_FACTOR = 0.995    # multiplier per idle hour
+    _DECAY_IDLE_HOURS = 24   # only decay entries idle longer than this
+
+    def decay_unused(self) -> int:
+        """Reduce importance of memories not used recently.
+
+        Applies _DECAY_FACTOR per idle hour for entries unused longer than
+        _DECAY_IDLE_HOURS. Importance never falls below the category floor.
+        Pinned entries are skipped. Returns the number of entries modified.
+        """
+        entries = self.load_all()
+        now = int(time.time())
+        idle_threshold_s = self._DECAY_IDLE_HOURS * 3600
+        changed = 0
+
+        for e in entries:
+            if e.get("pinned"):
+                continue
+            last_used = int(e.get("last_used_at") or e.get("timestamp", now))
+            idle_s = now - last_used
+            if idle_s < idle_threshold_s:
+                continue
+
+            idle_hours = idle_s / 3600
+            current = float(e.get("importance", 0.5))
+            floor = self._DECAY_FLOOR.get(e.get("category", "fact"), 0.5)
+            if current <= floor:
+                continue
+
+            decayed = current * (self._DECAY_FACTOR ** idle_hours)
+            new_imp = round(max(floor, decayed), 4)
+            if new_imp != current:
+                e["importance"] = new_imp
+                changed += 1
+
+        if changed:
+            self.save(entries)
+        return changed
+
     def find_duplicates(self, text: str, entries: List[Dict] = None) -> List[Dict]:
         """Find duplicate memory entries based on text content."""
         if entries is None:

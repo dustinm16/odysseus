@@ -829,6 +829,11 @@ async def startup_event():
         _startup_tasks.append(start_bg_monitor())
     except Exception as _e:
         logger.warning("Failed to start background-job monitor: %s", _e)
+    try:
+        from src.memory_maintenance import start_memory_maintenance
+        _startup_tasks.append(start_memory_maintenance(memory_manager))
+    except Exception as _e:
+        logger.warning("Failed to start memory maintenance: %s", _e)
     # MCP servers can be slow or blocked by local tooling. Connect them after
     # the web server is accepting traffic instead of delaying the whole UI.
     async def _startup_mcp_connections():

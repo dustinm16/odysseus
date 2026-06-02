@@ -23,6 +23,7 @@ def _strip_list_prefix(text: str) -> str:
 
 from services.memory import MemoryManager
 from core.session_manager import SessionManager
+from pydantic import BaseModel, Field, field_validator
 from src.request_models import MemoryAddRequest
 from core.database import SessionLocal
 from src.llm_core import llm_call_async
@@ -543,5 +544,61 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         if memory_vector and memory_vector.healthy:
             memory_vector.remove(memory_id)
         return {"ok": True, "message": "Memory deleted successfully"}
+
+    class ObserveRequest(BaseModel):
+        text: str = Field(..., min_length=1, max_length=2000, description="Observation text")
+        category: str = Field(default="fact", description="Memory category")
+        importance: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Override importance (default: auto-scored, capped at 0.5 for observations)")
+        source_label: Optional[str] = Field(default=None, max_length=64, description="Optional label for the observation source (e.g. 'shell', 'clipboard')")
+
+        @field_validator("category")
+        @classmethod
+        def validate_category(cls, v):
+            if v not in ["fact", "contact", "task", "preference", "identity", "project", "goal"]:
+                return "fact"
+            return v
+
+    @router.post("/observe")
+    async def observe(request: Request, data: ObserveRequest):
+        """Store an external observation as a low-importance memory.
+
+        Accepts structured context from external processes (watchers, agents,
+        automation scripts). Observations are scored as source='observation'
+        which caps importance at 0.5 unless overridden explicitly.
+        Requires authentication — observations are scoped to the current user.
+        """
+        from src.auth_helpers import require_privilege
+        require_privilege(request, "can_manage_memory")
+
+        user = _owner(request)
+        text = data.text.strip()
+        if not text:
+            raise HTTPException(400, "empty observation")
+
+        category = data.category
+        if data.importance is not None:
+            eff_importance = max(0.0, min(0.5, float(data.importance)))  # hard cap at 0.5
+        else:
+            from services.memory.importance_scorer import score_importance
+            eff_importance = score_importance(text, category, "observation")
+
+        label = data.source_label or "observation"
+        new_entry = memory_manager.add_entry(
+            text, source="observation", category=category, owner=user, importance=eff_importance
+        )
+        if data.source_label:
+            new_entry["source_label"] = label
+
+        all_mem = memory_manager.load_all()
+        all_mem.append(new_entry)
+        memory_manager.save(all_mem)
+
+        if memory_vector and memory_vector.healthy:
+            try:
+                memory_vector.add(new_entry["id"], text)
+            except Exception:
+                pass
+
+        return {"ok": True, "id": new_entry["id"], "importance": eff_importance}
 
     return router

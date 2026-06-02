@@ -81,8 +81,9 @@ _CATEGORY_FLOOR: dict[str, float] = {
 # ---------------------------------------------------------------------------
 
 _SOURCE_CAP: dict[str, float] = {
-    "auto":     0.85,
-    "ai_agent": 0.85,
+    "auto":        0.85,
+    "ai_agent":    0.85,
+    "observation": 0.50,  # external observations are low-trust by definition
 }
 
 
