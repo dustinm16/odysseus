@@ -158,6 +158,10 @@ class MemoryManager:
                 entry["category"] = "fact"
             if "importance" not in entry:
                 entry["importance"] = 0.5
+            if "uses" not in entry:
+                entry["uses"] = 0
+            if "last_used_at" not in entry:
+                entry["last_used_at"] = entry["timestamp"]
             validated.append(entry)
         return validated
     
@@ -212,10 +216,12 @@ class MemoryManager:
         if not text.strip():
             raise ValueError("Memory text cannot be empty")
 
+        now = int(time.time())
         entry = {
             "id": str(uuid.uuid4()),
             "text": text.strip(),
-            "timestamp": int(time.time()),
+            "timestamp": now,
+            "last_used_at": now,
             "source": source,
             "category": category,
             "uses": 0,
@@ -225,16 +231,32 @@ class MemoryManager:
             entry["owner"] = owner
         return entry
 
+    # Per-source importance nudge cap — mirrors src/memory.py
+    _NUDGE_CAP: dict = {
+        "user":        0.95,
+        "auto":        0.85,
+        "ai_agent":    0.85,
+        "observation": 0.50,
+    }
+    _NUDGE_STEP = 0.02
+
     def increment_uses(self, ids: list) -> None:
-        """Bump the use counter on the given memory IDs and persist."""
+        """Bump uses counter, nudge importance, and update last_used_at."""
         if not ids:
             return
-        entries = self.load_all()
         id_set = set(ids)
+        entries = self.load_all()
         changed = False
+        now = int(time.time())
         for e in entries:
             if e.get("id") in id_set:
-                e["uses"] = e.get("uses", 0) + 1
+                e["uses"] = int(e.get("uses", 0) or 0) + 1
+                e["last_used_at"] = now
+                source = e.get("source", "user")
+                cap = self._NUDGE_CAP.get(source, 0.95)
+                current = float(e.get("importance", 0.5))
+                if current < cap:
+                    e["importance"] = round(min(current + self._NUDGE_STEP, cap), 4)
                 changed = True
         if changed:
             self.save(entries)

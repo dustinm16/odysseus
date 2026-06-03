@@ -201,18 +201,6 @@ class ChatProcessor:
             pinned = [m for m in mem_entries if m.get("pinned")]
             non_pinned = [m for m in mem_entries if not m.get("pinned")]
 
-            # Hot tier: high-importance memories always injected, protected from trimming.
-            # Capped at 5 entries to prevent context lockup when many are marked important.
-            _HOT_THRESHOLD = 0.8
-            _HOT_CAP = 5
-            hot = sorted(
-                [m for m in non_pinned if float(m.get("importance", 0.5)) >= _HOT_THRESHOLD],
-                key=lambda m: float(m.get("importance", 0.5)),
-                reverse=True,
-            )[:_HOT_CAP]
-            hot_ids = {m["id"] for m in hot if m.get("id")}
-            warm = [m for m in non_pinned if m.get("id") not in hot_ids]
-
             _used_ids: list = []
             if pinned:
                 pinned_text = "\n- ".join([m["text"] for m in pinned])
@@ -225,21 +213,11 @@ class ChatProcessor:
                     if m.get("id"):
                         _used_ids.append(m["id"])
 
-            if hot:
-                hot_text = "\n".join([f"- {m['text']}" for m in hot])
-                hot_msg = untrusted_context_message(
-                    "saved memory: high-importance facts",
-                    f"High-importance facts — always keep in mind:\n{hot_text}",
-                )
-                hot_msg["_protected"] = True
-                preface.append(hot_msg)
-                for m in hot:
-                    self._last_used_memories.append({"text": m["text"], "category": m.get("category", "fact"), "type": "hot"})
-                    if m.get("id"):
-                        _used_ids.append(m["id"])
-
-            if warm:
-                relevant = self._hybrid_retrieve(message, warm, k=3)
+            # Importance is a 10% weight in the hybrid retrieval score — higher-importance
+            # memories naturally rank above equally-relevant lower-importance ones without
+            # bypassing the relevance gate entirely.
+            if non_pinned:
+                relevant = self._hybrid_retrieve(message, non_pinned, k=5)
                 if relevant:
                     ext_text = "\n".join([f"- {m['text']}" for m in relevant])
                     preface.append(untrusted_context_message(
