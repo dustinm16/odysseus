@@ -16,6 +16,7 @@ from src.constants import (
 from core.models import ChatMessage
 from src.chat_helpers import extract_urls, model_supports_vision
 from src.document_processor import build_user_content, analyze_image_with_vl_result
+from services.memory.importance_scorer import score_importance
 from src.youtube_handler import (
     is_youtube_url,
     extract_youtube_id,
@@ -302,7 +303,6 @@ class ChatHandler:
         if is_memory_cmd and memory_text:
             mem = self.memory_manager.load()
             if not self.memory_manager.find_duplicates(memory_text, mem):
-                from services.memory.importance_scorer import score_importance
                 new_entry = self.memory_manager.add_entry(
                     memory_text, source="user", importance=score_importance(memory_text, "fact", "user")
                 )

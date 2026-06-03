@@ -259,7 +259,7 @@ def test_identity_category_floor_without_pattern():
 # ── 11. Negation window width ─────────────────────────────────────────────────
 
 def test_negation_window_catches_distant_negation():
-    """Negation >40 chars before the pattern should still suppress the score."""
+    """Negation >80 chars before the pattern should still suppress the score."""
     # "used to" is ~55 chars before "live in" — would have been missed with 40-char window
     text = "I used to live in Berlin back in my university days, but I live in Seattle now."
     score = score_importance(text, "identity", "user")

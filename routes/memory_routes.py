@@ -28,6 +28,7 @@ from src.request_models import MemoryAddRequest
 from core.database import SessionLocal
 from src.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
+from services.memory.importance_scorer import score_importance
 from src.auth_helpers import get_current_user, require_user
 from src.endpoint_resolver import resolve_endpoint
 from src.upload_limits import read_upload_limited, MEMORY_IMPORT_MAX_BYTES
@@ -114,7 +115,6 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             _assert_session_owner(session_obj, user)
 
         if memory_data.importance is None:
-            from services.memory.importance_scorer import score_importance
             eff_importance = score_importance(text, memory_data.category, memory_data.source)
         else:
             eff_importance = memory_data.importance
@@ -542,7 +542,6 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                     all_mem[i]["importance"] = max(0.0, min(1.0, float(importance)))
                 elif new_text != memory.get("text", ""):
                     # Text changed with no explicit importance — re-score from new content
-                    from services.memory.importance_scorer import score_importance
                     all_mem[i]["importance"] = score_importance(
                         new_text, new_cat, memory.get("source", "user")
                     )
@@ -610,7 +609,6 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         if data.importance is not None:
             eff_importance = max(0.0, min(0.5, float(data.importance)))  # hard cap at 0.5
         else:
-            from services.memory.importance_scorer import score_importance
             eff_importance = score_importance(text, category, "observation")
 
         label = data.source_label or "observation"

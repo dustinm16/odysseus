@@ -16,6 +16,8 @@ from mcp.types import Tool, TextContent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from services.memory.importance_scorer import score_importance
+
 server = Server("memory")
 
 # Late-initialized managers (set during first tool call)
@@ -110,7 +112,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         category = arguments.get("category", "fact")
         if not text:
             return [TextContent(type="text", text="Error: Memory text cannot be empty")]
-        from services.memory.importance_scorer import score_importance
         entry = _memory_manager.add_entry(text, source="ai_agent", category=category,
                                           importance=score_importance(text, category, "ai_agent"))
         memories = _memory_manager.load_all()
