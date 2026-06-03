@@ -251,7 +251,7 @@ class MemoryManager:
             if e.get("id") in id_set:
                 e["uses"] = int(e.get("uses", 0) or 0) + 1
                 e["last_used_at"] = now
-                # Nudge importance toward hot tier — respect source cap
+                # Nudge importance upward — respect per-source cap
                 source = e.get("source", "user")
                 cap = self._NUDGE_CAP.get(source, 0.95)
                 current = float(e.get("importance", 0.5))

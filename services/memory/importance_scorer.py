@@ -55,7 +55,7 @@ _PATTERNS: list[tuple[re.Pattern, float, Optional[str]]] = [
     (re.compile(r"\bi (?:want|plan|hope|intend|need) to\b", re.I), 0.75, "goal"),
 ]
 
-# Negation window: if one of these appears in the 40 chars before a pattern
+# Negation window: if one of these appears in the 80 chars before a pattern
 # match, the pattern score is suppressed back to the category floor.
 _NEGATION_RE = re.compile(
     r"\b(not|don'?t|doesn'?t|never|no longer|isn'?t|aren'?t|wasn'?t|weren'?t|used to)\b",
