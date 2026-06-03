@@ -1,7 +1,7 @@
 """Hourly background task for memory importance maintenance.
 
-Runs decay_unused() once per hour so stale hot-tier entries drift back
-toward warm/cold over time. Wired into app startup alongside bg_monitor.
+Runs decay_unused() once per hour so idle memories drift back toward
+their category floor. Wired into app startup alongside bg_monitor.
 """
 import asyncio
 import logging

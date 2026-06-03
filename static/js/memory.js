@@ -691,7 +691,7 @@ export function renderMemoryList() {
       else                 { impLabel = 'low';  impClass = 'memory-imp-low'; }
       impBadge.className = `memory-cat-badge ${impClass}`;
       impBadge.textContent = impLabel;
-      impBadge.title = `Importance ${imp} — ${imp >= 0.8 ? 'always in context' : imp >= 0.6 ? 'retrieval boosted' : 'retrieval suppressed'}`;
+      impBadge.title = `Importance ${imp} — ${imp >= 0.8 ? 'top retrieval priority' : imp >= 0.6 ? 'retrieval boosted' : 'retrieval suppressed'}`;
       meta.appendChild(impBadge);
     }
 
