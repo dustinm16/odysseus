@@ -1,4 +1,4 @@
-"""Tests for hot/warm memory importance scoring and context tiering."""
+"""Tests for memory importance scoring and retrieval boost."""
 import time
 import pytest
 from unittest.mock import MagicMock, patch
@@ -136,33 +136,13 @@ def test_importance_does_not_override_strong_relevance():
     )
 
 
-# ── 4. Hot tier always injected; warm tier is retrieval-only ──────────────────
+# ── 4. All non-pinned memories go through hybrid retrieval ────────────────────
 
-def test_hot_memories_always_injected():
-    hot_mem  = _make_mem("user is an engineer", importance=0.9)
-    warm_mem = _make_mem("user mentioned coffee", importance=0.4)
+def test_irrelevant_memory_not_injected():
+    """A memory with no keyword or vector match for the query should not appear."""
+    mem = _make_mem("user mentioned coffee", importance=0.4)
 
-    proc = _make_processor(memories=[hot_mem, warm_mem])
-    # Give warm_mem no vector match so hybrid retrieve won't pick it up
-    proc.memory_vector = None
-
-    preface, _, _ = proc.build_context_preface(
-        message="hello",
-        session=MagicMock(),
-        use_memory=True,
-        use_rag=False,
-        use_web=False,
-        owner="testuser",
-    )
-
-    all_contents = " ".join(m.get("content", "") for m in preface)
-    assert "user is an engineer" in all_contents, "Hot memory must always appear in context"
-
-
-def test_warm_memories_not_always_injected():
-    warm_mem = _make_mem("user mentioned coffee", importance=0.4)
-
-    proc = _make_processor(memories=[warm_mem])
+    proc = _make_processor(memories=[mem])
     proc.memory_vector = None  # No vector; keyword won't match "hello"
 
     preface, _, _ = proc.build_context_preface(
@@ -176,61 +156,8 @@ def test_warm_memories_not_always_injected():
 
     system_contents = " ".join(m.get("content", "") for m in preface)
     assert "user mentioned coffee" not in system_contents, (
-        "Warm memory with no relevance should not appear for an unrelated query"
+        "Memory with no relevance to the query must not be injected"
     )
-
-
-# ── 5. Hot memory survives trim_for_context under pressure ───────────────────
-
-def test_hot_memory_protected_from_trimming():
-    hot_content = "High-importance facts — always keep in mind:\n- user is an engineer"
-
-    # Mirrors what build_context_preface produces: user-role untrusted message + _protected flag
-    from src.prompt_security import untrusted_context_message
-    hot_msg = untrusted_context_message("saved memory: high-importance facts", hot_content)
-    hot_msg["_protected"] = True
-
-    regular_system = {"role": "system", "content": "You are a helpful assistant."}
-    # Large conversation to pressure the context budget
-    big_convo = [
-        {"role": "user" if i % 2 == 0 else "assistant", "content": "x " * 200}
-        for i in range(30)
-    ]
-
-    messages = [regular_system, hot_msg] + big_convo
-
-    # Use a very tight budget (500 tokens)
-    trimmed = trim_for_context(messages, context_length=600, reserve_tokens=50)
-
-    combined = " ".join(m.get("content", "") for m in trimmed)
-    assert "user is an engineer" in combined, (
-        "Hot (_protected) memory must survive aggressive context trimming"
-    )
-
-
-# ── 6. Hot-tier cap prevents context lockup ───────────────────────────────────
-
-def test_hot_tier_capped_at_five():
-    hot_mems = [_make_mem(f"important fact {i}", importance=0.9) for i in range(10)]
-    proc = _make_processor(memories=hot_mems)
-    proc.memory_vector = None
-
-    preface, _, _ = proc.build_context_preface(
-        message="hello",
-        session=MagicMock(),
-        use_memory=True,
-        use_rag=False,
-        use_web=False,
-        owner="testuser",
-    )
-
-    hot_block = next(
-        (m for m in preface if "high-importance" in m.get("content", "").lower() and m.get("_protected")),
-        None
-    )
-    assert hot_block is not None, "Protected hot block should be present"
-    injected_facts = [l for l in hot_block["content"].splitlines() if l.strip().startswith("- ")]
-    assert len(injected_facts) <= 5, f"Hot tier must be capped at 5, got {len(injected_facts)}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -307,13 +234,13 @@ def test_auto_score_fires_when_importance_none(tmp_path):
     assert entry["importance"] == 1.0
 
 
-# ── 9. Auto-extracted identity lands in hot tier ─────────────────────────────
+# ── 9. Auto-extracted identity scores high enough to win retrieval ────────────
 
-def test_auto_extracted_identity_reaches_hot_tier():
-    """Auto-extracted 'my name is' hits 0.85 (just at hot threshold) due to source cap."""
+def test_auto_extracted_identity_scores_high():
+    """Auto-extracted 'my name is' scores 0.85 (source cap) — high enough to rank first."""
     score = score_importance("My name is Sam.", "identity", "auto")
-    assert score >= 0.8, "Auto-extracted identity must reach the hot tier threshold"
-    assert score <= 0.85, "Auto-extracted identity must not exceed the source cap"
+    assert score >= 0.8, "Auto-extracted identity must score ≥ 0.8"
+    assert score <= 0.85, "Auto-extracted identity must not exceed the auto source cap"
 
 
 def test_user_identity_reaches_critical():
@@ -355,15 +282,29 @@ def test_negation_window_falls_back_to_category_floor():
 
 # ── 12. services/memory/memory.py parity ─────────────────────────────────────
 
-def test_services_memory_manager_initializes_uses(tmp_path):
-    """services/memory/memory.py add_entry must initialize uses=0 (parity with src/memory.py)."""
+def test_services_memory_manager_parity(tmp_path):
+    """services/memory/memory.py add_entry must have parity with src/memory.py."""
     import json
     (tmp_path / "memory.json").write_text("[]")
     from services.memory.memory import MemoryManager as ServicesMemoryManager
     mgr = ServicesMemoryManager(str(tmp_path))
     entry = mgr.add_entry("test entry", source="user")
-    assert "uses" in entry, "services MemoryManager.add_entry must set uses field"
-    assert entry["uses"] == 0
+    assert entry.get("uses") == 0, "services add_entry must set uses=0"
+    assert "last_used_at" in entry, "services add_entry must set last_used_at"
+
+
+def test_services_increment_uses_nudges_importance(tmp_path):
+    """services/memory/memory.py increment_uses must nudge importance (parity with src)."""
+    import json
+    (tmp_path / "memory.json").write_text("[]")
+    from services.memory.memory import MemoryManager as ServicesMemoryManager
+    mgr = ServicesMemoryManager(str(tmp_path))
+    entry = mgr.add_entry("test entry", source="user", importance=0.5)
+    all_mem = [entry]; mgr.save(all_mem)
+
+    mgr.increment_uses([entry["id"]])
+    reloaded = mgr.load_all()
+    assert reloaded[0]["importance"] == pytest.approx(0.52, abs=0.001)
 
 
 # ── 13. PUT re-scores when text changes ──────────────────────────────────────
